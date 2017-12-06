@@ -8,12 +8,14 @@ lazy val root = project.in(file("."))
   ))
   .settings(BuildSettings.assemblySettings)
   .settings(BuildSettings.buildSettings)
+  .settings(BuildSettings.scalifySettings)
   .settings(
     libraryDependencies ++= Seq(
       Dependencies.hadoop,
       Dependencies.spark,
       Dependencies.sparkSql,
-      Dependencies.analyticsSdk
+      Dependencies.analyticsSdk,
+      Dependencies.scopt
     )
   )
 
