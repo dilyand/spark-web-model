@@ -9,7 +9,7 @@ import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
 
 object WebModel {
 
-  /** Initialize Spark Job environment from parsed configuration */
+  /** Initialize Spark Job environment from parsed configuration and launch modeling */
   def init(jobConfig: JobConfig): Unit = {
     val conf = new SparkConf()
       .setAppName("sparkDataModeling")
@@ -41,7 +41,7 @@ object WebModel {
     //00-web-page-context
 
     val df = spark.read.json(enrichedData)
-    df.registerTempTable("atomic_events")
+    df.createOrReplaceTempView("atomic_events")
 
     val dfWebPageContext = spark.sql(
       """
@@ -63,7 +63,7 @@ object WebModel {
         root_id NOT IN (SELECT root_id FROM prep GROUP BY 1 HAVING COUNT(*) > 1) -- exclude all root ID with more than one page view ID
       """
     )
-    dfWebPageContext.registerTempTable("scratch_web_page_context")
+    dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
 
     //01-events
 
@@ -157,7 +157,7 @@ object WebModel {
           n = 1
       """
     )
-    dfEvents.registerTempTable("scratch_events")
+    dfEvents.createOrReplaceTempView("scratch_events")
 
     // 02-events-time
     val dfEventsTime = spark.sql(
@@ -181,7 +181,7 @@ object WebModel {
         |GROUP BY 1
       """.stripMargin
     )
-    dfEventsTime.registerTempTable("scratch_web_events_time")
+    dfEventsTime.createOrReplaceTempView("scratch_web_events_time")
 
     spark.sql("select * from scratch_web_events_time")
 
