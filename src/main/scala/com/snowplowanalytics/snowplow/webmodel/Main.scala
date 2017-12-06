@@ -1,16 +1,20 @@
 package com.snowplowanalytics.snowplow.webmodel
 
-import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
+import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
 
 object Main {
 
+  /** Job entry-point */
   def main(args: Array[String]) {
 
     val inputDir = "xxx"
 
-    val conf = new SparkConf().setAppName("sparkDataModeling").setMaster("local[*]")
+    val conf = new SparkConf()
+      .setAppName("sparkDataModeling")
+      .setMaster("local[*]")
 
     val sc = new SparkContext(conf)
 
@@ -32,8 +36,24 @@ object Main {
     val df = spark.read.json(eventsRDD)
     df.registerTempTable("atomic_events")
 
-    //00-web-page-context
+    model(spark, eventsRDD) .show(3)
 
+
+    /*
+    spark.sql("SELECT * FROM web_page_context").show(5)
+
+    spark.sql("SELECT contexts_com_snowplowanalytics_snowplow_web_page_1 FROM events").show(3)
+
+    val dfVisitors = spark.sql("SELECT domain_userid, MAX(domain_sessionidx) AS sessions FROM events GROUP BY domain_userid")
+    dfVisitors.registerTempTable("visitors")
+
+    spark.sql("SELECT a.domain_userid, b.sessions, COUNT(*) AS count FROM events AS a LEFT JOIN visitors AS b ON a.domain_userid = b.domain_userid GROUP BY a.domain_userid, b.sessions").show(5)
+    */
+  }
+
+  /** Primary data-modeling function */
+  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
+    //00-web-page-context
     val dfWebPageContext = spark.sql(
       """
       WITH prep AS
@@ -174,19 +194,6 @@ object Main {
     )
     dfEventsTime.registerTempTable("scratch_web_events_time")
 
-    spark.sql("select * from scratch_web_events_time").show(3)
-
-
-    /*
-    spark.sql("SELECT * FROM web_page_context").show(5)
-
-    spark.sql("SELECT contexts_com_snowplowanalytics_snowplow_web_page_1 FROM events").show(3)
-
-    val dfVisitors = spark.sql("SELECT domain_userid, MAX(domain_sessionidx) AS sessions FROM events GROUP BY domain_userid")
-    dfVisitors.registerTempTable("visitors")
-
-    spark.sql("SELECT a.domain_userid, b.sessions, COUNT(*) AS count FROM events AS a LEFT JOIN visitors AS b ON a.domain_userid = b.domain_userid GROUP BY a.domain_userid, b.sessions").show(5)
-    */
+    spark.sql("select * from scratch_web_events_time")
   }
-
 }
