@@ -1,13 +1,17 @@
-object WebModel {
+package com.snowplowanalytics.snowplow.webmodel
+
+import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.SparkSession
+
+object Main {
 
   def main(args: Array[String]) {
 
     val inputDir = "xxx"
 
-    import org.apache.spark.SparkConf
     val conf = new SparkConf().setAppName("sparkDataModeling").setMaster("local[*]")
 
-    import org.apache.spark.SparkContext
     val sc = new SparkContext(conf)
 
     sc.hadoopConfiguration.set("fs.s3n.awsAccessKeyId", "xxx")
@@ -15,20 +19,16 @@ object WebModel {
 
     val inputRDD = sc.textFile(inputDir)
 
-    import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
-
     val eventsRDD = inputRDD
       .map(line => EventTransformer.transform(line))
       .filter(_.isRight)
       .flatMap(_.right.toOption).
       persist
 
-    import org.apache.spark.sql.SparkSession
     val spark = SparkSession
       .builder()
       .getOrCreate()
 
-    import spark.implicits._
     val df = spark.read.json(eventsRDD)
     df.registerTempTable("atomic_events")
 
