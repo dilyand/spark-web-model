@@ -17,10 +17,6 @@ object WebModel {
 
     val sc = new SparkContext(conf)
 
-    // These can be parsed from config, but we'll be able to access S3 via EMR role
-    sc.hadoopConfiguration.set("fs.s3n.awsAccessKeyId", "xxx")
-    sc.hadoopConfiguration.set("fs.s3n.awsSecretAccessKey", "xxx")
-
     val inputRDD = sc.textFile(jobConfig.input)
 
     val eventsRDD = inputRDD
