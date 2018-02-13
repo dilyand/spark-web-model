@@ -1,21 +1,23 @@
+package com.snowplowanalytics.snowplow.webmodel
+
+import org.apache.spark.rdd.RDD
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.{DataFrame, SparkSession}
+
+import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
+
+
 object WebModel {
 
-  def main(args: Array[String]) {
+  /** Initialize Spark Job environment from parsed configuration and launch modeling */
+  def init(jobConfig: JobConfig): Unit = {
+    val conf = new SparkConf()
+      .setAppName("sparkDataModeling")
+      .setMaster("local[*]")
 
-    val inputDir = "xxx"
-
-    import org.apache.spark.SparkConf
-    val conf = new SparkConf().setAppName("sparkDataModeling").setMaster("local[*]")
-
-    import org.apache.spark.SparkContext
     val sc = new SparkContext(conf)
 
-    sc.hadoopConfiguration.set("fs.s3n.awsAccessKeyId", "xxx")
-    sc.hadoopConfiguration.set("fs.s3n.awsSecretAccessKey", "xxx")
-
-    val inputRDD = sc.textFile(inputDir)
-
-    import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
+    val inputRDD = sc.textFile(jobConfig.input)
 
     val eventsRDD = inputRDD
       .map(line => EventTransformer.transform(line))
@@ -23,16 +25,19 @@ object WebModel {
       .flatMap(_.right.toOption).
       persist
 
-    import org.apache.spark.sql.SparkSession
     val spark = SparkSession
       .builder()
       .getOrCreate()
 
-    import spark.implicits._
-    val df = spark.read.json(eventsRDD)
-    df.registerTempTable("atomic_events")
+    model(spark, eventsRDD).show(3)
+  }
 
+  /** Primary data-modeling function */
+  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
     //00-web-page-context
+
+    val df = spark.read.json(enrichedData)
+    df.createOrReplaceTempView("atomic_events")
 
     val dfWebPageContext = spark.sql(
       """
@@ -54,7 +59,7 @@ object WebModel {
         root_id NOT IN (SELECT root_id FROM prep GROUP BY 1 HAVING COUNT(*) > 1) -- exclude all root ID with more than one page view ID
       """
     )
-    dfWebPageContext.registerTempTable("scratch_web_page_context")
+    dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
 
     //01-events
 
@@ -148,7 +153,7 @@ object WebModel {
           n = 1
       """
     )
-    dfEvents.registerTempTable("scratch_events")
+    dfEvents.createOrReplaceTempView("scratch_events")
 
     // 02-events-time
     val dfEventsTime = spark.sql(
@@ -172,10 +177,9 @@ object WebModel {
         |GROUP BY 1
       """.stripMargin
     )
-    dfEventsTime.registerTempTable("scratch_web_events_time")
+    dfEventsTime.createOrReplaceTempView("scratch_web_events_time")
 
-    spark.sql("select * from scratch_web_events_time").show(3)
-
+    spark.sql("select * from scratch_web_events_time")
 
     /*
     spark.sql("SELECT * FROM web_page_context").show(5)
@@ -188,5 +192,4 @@ object WebModel {
     spark.sql("SELECT a.domain_userid, b.sessions, COUNT(*) AS count FROM events AS a LEFT JOIN visitors AS b ON a.domain_userid = b.domain_userid GROUP BY a.domain_userid, b.sessions").show(5)
     */
   }
-
 }

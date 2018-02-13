@@ -1,0 +1,31 @@
+{
+  "schema": "iglu:com.snowplowanalytics.dataflowrunner/PlaybookConfig/avro/1-0-1",
+  "data": {
+    "region": "us-east-1",
+    "credentials": {
+      "accessKeyId": "env",
+      "secretAccessKey": "env"
+    },
+    "steps": [
+      {
+        "type": "CUSTOM_JAR",
+        "name": "Spark Web Model",
+        "actionOnFailure": "CANCEL_AND_WAIT",
+        "jar": "command-runner.jar",
+        "arguments": [
+          "spark-submit",
+          "--deploy-mode",
+          "cluster",
+          "--class",
+          "com.snowplowanalytics.snowplow.webmodel.Main",
+
+          "s3://cross-batch-test/jars/spark-web-model-0.1.0-rc1.jar",
+
+          "--input",
+          "{{.input}}"
+        ]
+      }
+    ],
+    "tags": [ ]
+  }
+}
