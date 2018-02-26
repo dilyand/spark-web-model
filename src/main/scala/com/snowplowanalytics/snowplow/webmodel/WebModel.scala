@@ -2,10 +2,12 @@ package com.snowplowanalytics.snowplow.webmodel
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{ColumnName, DataFrame, SparkSession}
+
+import org.json4s.JsonAST.JObject
+import org.json4s.jackson.JsonMethods.parse
 
 import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
-
 
 object WebModel {
 
@@ -31,10 +33,33 @@ object WebModel {
       case Left(_) => throw new RuntimeException(s"Unexpected JSON input: $line")
     }
 
+  def transformToJsonObject(line: String): JObject = {
+    parse(line) match {
+      case o: JObject => o
+      case _ => throw new RuntimeException(s"Invalid JSON Object input: $line")
+    }
+  }
+
   def createAtomicEvents(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
     val df = spark.read.json(enrichedData)
     df.createOrReplaceTempView("atomic_events")
     df
+  }
+
+  def createScratchWebPageContextDf(spark: SparkSession, atomicEvents: DataFrame): DataFrame = {
+    import spark.implicits._
+
+    val eventId = new ColumnName("event_id")
+    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
+      .getItem(0)           // Get first available context
+      .getField("id")       // Get `id` property
+      .as("page_view_id")   // Alias
+
+    atomicEvents
+      .select(eventId, pageViewId)
+      .groupBy(eventId, $"page_view_id")
+      .count()
+      .filter($"count" === 1)
   }
 
   def createScratchWebPageContext(spark: SparkSession): DataFrame = {
