@@ -18,27 +18,26 @@ object WebModel {
     val sc = new SparkContext(conf)
 
     val inputRDD = sc.textFile(jobConfig.input)
+    val eventsRDD = inputRDD.map(transformToJson).persist
 
-    val eventsRDD = inputRDD
-      .map(line => EventTransformer.transform(line))
-      .filter(_.isRight)
-      .flatMap(_.right.toOption).
-      persist
-
-    val spark = SparkSession
-      .builder()
-      .getOrCreate()
+    val spark = SparkSession.builder().getOrCreate()
 
     model(spark, eventsRDD).show(3)
   }
 
-  /** Primary data-modeling function */
-  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
-    //00-web-page-context
+  def transformToJson(line: String): String =
+    EventTransformer.transform(line) match {
+      case Right(s) => s
+      case Left(_) => throw new RuntimeException(s"Unexpected JSON input: $line")
+    }
 
+  def createAtomicEvents(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
     val df = spark.read.json(enrichedData)
     df.createOrReplaceTempView("atomic_events")
+    df
+  }
 
+  def createScratchWebPageContext(spark: SparkSession): DataFrame = {
     val dfWebPageContext = spark.sql(
       """
       WITH prep AS
@@ -60,9 +59,10 @@ object WebModel {
       """
     )
     dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
+    dfWebPageContext
+  }
 
-    //01-events
-
+  def createScratchEvents(spark: SparkSession): DataFrame = {
     val dfEvents = spark.sql(
       """
       -- select the relevant dimensions from atomic_events
@@ -154,8 +154,10 @@ object WebModel {
       """
     )
     dfEvents.createOrReplaceTempView("scratch_events")
+    dfEvents
+  }
 
-    // 02-events-time
+  def createScratchWebEventsTime(spark: SparkSession): DataFrame = {
     val dfEventsTime = spark.sql(
       """
         |SELECT
@@ -178,6 +180,21 @@ object WebModel {
       """.stripMargin
     )
     dfEventsTime.createOrReplaceTempView("scratch_web_events_time")
+    dfEventsTime
+  }
+
+  /** Primary data-modeling function */
+  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
+    createAtomicEvents(spark, enrichedData)
+
+    // 00-web-page-context
+    createScratchWebPageContext(spark)
+
+    // 01-events
+    createScratchEvents(spark)
+
+    // 02-events-time
+    createScratchWebEventsTime(spark)
 
     spark.sql("select * from scratch_web_events_time")
 
