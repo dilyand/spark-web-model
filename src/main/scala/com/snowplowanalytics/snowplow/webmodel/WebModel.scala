@@ -1,6 +1,5 @@
 package com.snowplowanalytics.snowplow.webmodel
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{ColumnName, DataFrame, SparkSession}
 
@@ -19,12 +18,16 @@ object WebModel {
 
     val sc = new SparkContext(conf)
 
-    val inputRDD = sc.textFile(jobConfig.input)
-    val eventsRDD = inputRDD.map(transformToJson).persist
-
     val spark = SparkSession.builder().getOrCreate()
+    val atomicData = getAtomicData(sc, spark, jobConfig.input)
 
-    model(spark, eventsRDD).show(3)
+    model(spark, atomicData).show(3)
+  }
+
+  def getAtomicData(sc: SparkContext, spark: SparkSession, path: String): DataFrame = {
+    val inputRDD = sc.textFile(path)
+    val eventsRDD = inputRDD.map(transformToJson).persist
+    spark.read.json(eventsRDD)
   }
 
   def transformToJson(line: String): String =
@@ -40,29 +43,27 @@ object WebModel {
     }
   }
 
-  def createAtomicEvents(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
-    val df = spark.read.json(enrichedData)
-    df.createOrReplaceTempView("atomic_events")
-    df
+  def createAtomicEvents(spark: SparkSession, enrichedData: DataFrame): DataFrame = {
+    enrichedData.createOrReplaceTempView("atomic_events")
+    enrichedData
   }
 
-  def createScratchWebPageContextDf(spark: SparkSession, atomicEvents: DataFrame): DataFrame = {
-    import spark.implicits._
-
+  /** Get unique pairs of `event_id` and `page_view_id` */
+  def scratchWebPageContextDf(atomicEvents: DataFrame): DataFrame = {
     val eventId = new ColumnName("event_id")
     val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
-      .getItem(0)           // Get first available context
-      .getField("id")       // Get `id` property
-      .as("page_view_id")   // Alias
+      .getItem(0)               // Get first available context
+      .getField("id")           // Get `id` property
+      .as("page_view_id")       // Alias
 
     atomicEvents
       .select(eventId, pageViewId)
-      .groupBy(eventId, $"page_view_id")
-      .count()
-      .filter($"count" === 1)
+      .groupBy(eventId, new ColumnName("page_view_id"))
+      .count().filter(new ColumnName("count") === 1)    // Exclude all rows with more than one page view id
+      .drop("count")
   }
 
-  def createScratchWebPageContext(spark: SparkSession): DataFrame = {
+  def scratchWebPageContext(spark: SparkSession): Unit = {
     val dfWebPageContext = spark.sql(
       """
       WITH prep AS
@@ -84,10 +85,9 @@ object WebModel {
       """
     )
     dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
-    dfWebPageContext
   }
 
-  def createScratchEvents(spark: SparkSession): DataFrame = {
+  def scratchEvents(spark: SparkSession): Unit = {
     val dfEvents = spark.sql(
       """
       -- select the relevant dimensions from atomic_events
@@ -179,10 +179,9 @@ object WebModel {
       """
     )
     dfEvents.createOrReplaceTempView("scratch_events")
-    dfEvents
   }
 
-  def createScratchWebEventsTime(spark: SparkSession): DataFrame = {
+  def scratchWebEventsTime(spark: SparkSession): Unit = {
     val dfEventsTime = spark.sql(
       """
         |SELECT
@@ -205,21 +204,20 @@ object WebModel {
       """.stripMargin
     )
     dfEventsTime.createOrReplaceTempView("scratch_web_events_time")
-    dfEventsTime
   }
 
   /** Primary data-modeling function */
-  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
+  def model(spark: SparkSession, enrichedData: DataFrame): DataFrame = {
     createAtomicEvents(spark, enrichedData)
 
     // 00-web-page-context
-    createScratchWebPageContext(spark)
+    scratchWebPageContext(spark)
 
     // 01-events
-    createScratchEvents(spark)
+    scratchEvents(spark)
 
     // 02-events-time
-    createScratchWebEventsTime(spark)
+    scratchWebEventsTime(spark)
 
     spark.sql("select * from scratch_web_events_time")
 
