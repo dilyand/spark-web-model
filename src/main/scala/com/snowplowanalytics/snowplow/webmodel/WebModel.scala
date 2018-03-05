@@ -1,11 +1,12 @@
 package com.snowplowanalytics.snowplow.webmodel
 
-import org.apache.spark.rdd.RDD
 import org.apache.spark.{SparkConf, SparkContext}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{ColumnName, DataFrame, SparkSession}
+
+import org.json4s.JsonAST.JObject
+import org.json4s.jackson.JsonMethods.parse
 
 import com.snowplowanalytics.snowplow.analytics.scalasdk.json.EventTransformer
-
 
 object WebModel {
 
@@ -17,28 +18,52 @@ object WebModel {
 
     val sc = new SparkContext(conf)
 
-    val inputRDD = sc.textFile(jobConfig.input)
+    val spark = SparkSession.builder().getOrCreate()
+    val atomicData = getAtomicData(sc, spark, jobConfig.input)
 
-    val eventsRDD = inputRDD
-      .map(line => EventTransformer.transform(line))
-      .filter(_.isRight)
-      .flatMap(_.right.toOption).
-      persist
-
-    val spark = SparkSession
-      .builder()
-      .getOrCreate()
-
-    model(spark, eventsRDD).show(3)
+    model(spark, atomicData).show(3)
   }
 
-  /** Primary data-modeling function */
-  def model(spark: SparkSession, enrichedData: RDD[String]): DataFrame = {
-    //00-web-page-context
+  def getAtomicData(sc: SparkContext, spark: SparkSession, path: String): DataFrame = {
+    val inputRDD = sc.textFile(path)
+    val eventsRDD = inputRDD.map(transformToJson).persist
+    spark.read.json(eventsRDD)
+  }
 
-    val df = spark.read.json(enrichedData)
-    df.createOrReplaceTempView("atomic_events")
+  def transformToJson(line: String): String =
+    EventTransformer.transform(line) match {
+      case Right(s) => s
+      case Left(_) => throw new RuntimeException(s"Unexpected JSON input: $line")
+    }
 
+  def transformToJsonObject(line: String): JObject = {
+    parse(line) match {
+      case o: JObject => o
+      case _ => throw new RuntimeException(s"Invalid JSON Object input: $line")
+    }
+  }
+
+  def createAtomicEvents(spark: SparkSession, enrichedData: DataFrame): DataFrame = {
+    enrichedData.createOrReplaceTempView("atomic_events")
+    enrichedData
+  }
+
+  /** Get unique pairs of `event_id` and `page_view_id` */
+  def scratchWebPageContextDf(atomicEvents: DataFrame): DataFrame = {
+    val eventId = new ColumnName("event_id")
+    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
+      .getItem(0)               // Get first available context
+      .getField("id")           // Get `id` property
+      .as("page_view_id")       // Alias
+
+    atomicEvents
+      .select(eventId, pageViewId)
+      .groupBy(eventId, new ColumnName("page_view_id"))
+      .count().filter(new ColumnName("count") === 1)    // Exclude all rows with more than one page view id
+      .drop("count")
+  }
+
+  def scratchWebPageContext(spark: SparkSession): Unit = {
     val dfWebPageContext = spark.sql(
       """
       WITH prep AS
@@ -60,9 +85,9 @@ object WebModel {
       """
     )
     dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
+  }
 
-    //01-events
-
+  def scratchEvents(spark: SparkSession): Unit = {
     val dfEvents = spark.sql(
       """
       -- select the relevant dimensions from atomic_events
@@ -154,8 +179,9 @@ object WebModel {
       """
     )
     dfEvents.createOrReplaceTempView("scratch_events")
+  }
 
-    // 02-events-time
+  def scratchWebEventsTime(spark: SparkSession): Unit = {
     val dfEventsTime = spark.sql(
       """
         |SELECT
@@ -178,6 +204,20 @@ object WebModel {
       """.stripMargin
     )
     dfEventsTime.createOrReplaceTempView("scratch_web_events_time")
+  }
+
+  /** Primary data-modeling function */
+  def model(spark: SparkSession, enrichedData: DataFrame): DataFrame = {
+    createAtomicEvents(spark, enrichedData)
+
+    // 00-web-page-context
+    scratchWebPageContext(spark)
+
+    // 01-events
+    scratchEvents(spark)
+
+    // 02-events-time
+    scratchWebEventsTime(spark)
 
     spark.sql("select * from scratch_web_events_time")
 
