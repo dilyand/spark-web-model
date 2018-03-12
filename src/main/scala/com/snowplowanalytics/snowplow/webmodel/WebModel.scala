@@ -2,6 +2,8 @@ package com.snowplowanalytics.snowplow.webmodel
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.{ColumnName, DataFrame, SparkSession}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions._
 
 import org.json4s.JsonAST.JObject
 import org.json4s.jackson.JsonMethods.parse
@@ -24,10 +26,31 @@ object WebModel {
     model(spark, atomicData).show(3)
   }
 
+  /*
+  def initDf(jobConfig: JobConfig): Unit = {
+    val conf = new SparkConf()
+      .setAppName("sparkDataModeling")
+      .setMaster("local[*]")
+
+    val sc = new SparkContext(conf)
+    val spark = SparkSession.builder().getOrCreate()
+
+    val atomicData = getAtomicData(sc, spark, jobConfig.input)
+
+    val scratchWebPageContextData = scratchWebPageContextDf(atomicData)
+    val scratchEventsData = scratchEventsDf(atomicData, scratchWebPageContextData)
+
+
+  }
+  */
+
+
+
   def getAtomicData(sc: SparkContext, spark: SparkSession, path: String): DataFrame = {
     val inputRDD = sc.textFile(path)
     val eventsRDD = inputRDD.map(transformToJson).persist
     spark.read.json(eventsRDD)
+    // add filtering on page_name and platform here
   }
 
   def transformToJson(line: String): String =
@@ -36,12 +59,6 @@ object WebModel {
       case Left(_) => throw new RuntimeException(s"Unexpected JSON input: $line")
     }
 
-  def transformToJsonObject(line: String): JObject = {
-    parse(line) match {
-      case o: JObject => o
-      case _ => throw new RuntimeException(s"Invalid JSON Object input: $line")
-    }
-  }
 
   def createAtomicEvents(spark: SparkSession, enrichedData: DataFrame): DataFrame = {
     enrichedData.createOrReplaceTempView("atomic_events")
@@ -86,6 +103,85 @@ object WebModel {
     )
     dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
   }
+
+  /** Build events datarame */
+  def scratchEventsDf(atomicEvents: DataFrame, scratchWebPageContextDf: DataFrame): DataFrame = {
+    val userId = new ColumnName("user_id")
+    val domainUserId = new ColumnName("domain_userid")
+    val networkUserId = new ColumnName("network_userid")
+    val domainSessionid = new ColumnName("domain_sessionid")
+    val domainSessionIdx = new ColumnName("domain_sessionidx")
+    val pageViewId = new ColumnName("page_view_id")
+    val pageTitle = new ColumnName("page_title")
+    val pageUrlScheme = new ColumnName("page_urlscheme")
+    val pageUrlHost = new ColumnName("page_urlhost")
+    val pageUrlPort = new ColumnName("page_urlport")
+    val pageUrlPath = new ColumnName("page_urlpath")
+    val pageUrlQuery = new ColumnName("page_urlquery")
+    val pageUrlFragment = new ColumnName("page_urlfragment")
+    val refrUrlScheme = new ColumnName("refr_urlscheme")
+    val refrUrlHost = new ColumnName("refr_urlhost")
+    val refrUrlPort = new ColumnName("refr_urlport")
+    val refrUrlPath = new ColumnName("refr_urlpath")
+    val refrUrlQuery = new ColumnName("refr_urlquery")
+    val refrUrlFragment = new ColumnName("refr_urlfragment")
+    val refrMedium = new ColumnName("refr_medium")
+    val refrSource = new ColumnName("refr_source")
+    val refrTerm = new ColumnName("refr_term")
+    val mktMedium = new ColumnName("mkt_medium")
+    val mktSource = new ColumnName("mkt_source")
+    val mktTerm = new ColumnName("mkt_term")
+    val mktContent = new ColumnName("mkt_content")
+    val mktCampaign = new ColumnName("mkt_campaign")
+    val mktClickId = new ColumnName("mkt_clickid")
+    val mktNetwork = new ColumnName("mkt_network")
+    val geoCountry = new ColumnName("geo_country")
+    val geoRegion = new ColumnName("geo_region")
+    val geoRegionName = new ColumnName("geo_region_name")
+    val geoCity = new ColumnName("geo_city")
+    val geoZipcode = new ColumnName("geo_zipcode")
+    val geoLatitude = new ColumnName("geo_latitude")
+    val geoLongitude = new ColumnName("geo_longitude")
+    val geoTimezone = new ColumnName("geo_timezone")
+    val userIpAddress = new ColumnName("user_ipaddress")
+    val ipIsp = new ColumnName("ip_isp")
+    val ipOrganization = new ColumnName("ip_organization")
+    val ipDomain = new ColumnName("ip_domain")
+    val ipNetSpeed = new ColumnName("ip_netspeed")
+    val appId = new ColumnName("app_id")
+    val useragent = new ColumnName("useragent")
+    val brName = new ColumnName("br_name")
+    val brFamily = new ColumnName("br_family")
+    val brVersion = new ColumnName("br_version")
+    val brType = new ColumnName("br_type")
+    val brRenderEngine = new ColumnName("br_renderengine")
+    val brLang = new ColumnName("br_lang")
+    val dvceType = new ColumnName("dvce_type")
+    val dvceIsMobile = new ColumnName("dvce_ismobile")
+    val osName = new ColumnName("os_name")
+    val osFamily = new ColumnName("os_family")
+    val osManufacturer = new ColumnName("os_manufacturer")
+    val osTimezone = new ColumnName("os_timezone")
+    val nameTracker = new ColumnName("name_tracker")
+    val dvceCreatedTstamp = new ColumnName("dvce_created_tstamp")
+
+    val windowSpec = Window.partitionBy(pageViewId).orderBy(dvceCreatedTstamp)
+
+    atomicEvents
+      .select(userId, domainUserid, networkUserid, domainSessionid, domainSessionidx, pageTitle, pageUrlscheme,
+          pageUrlhost, pageUrlport, pageUrlpath, pageUrlquery, pageUrlfragment, refrUrlscheme, refrUrlhost, refrUrlport,
+          refrUrlpath, refrUrlquery, refrUrlfragment, refrMedium, refrSource, refrTerm, mktMedium, mktSource, mktTerm,
+          mktContent, mktCampaign, mktClickid, mktNetwork, geoCountry, geoRegion, geoRegionName, geoCity, geoZipcode,
+          geoLatitude, geoLongitude, geoTimezone, userIpaddress, ipIsp, ipOrganization, ipDomain, ipNetspeed, appId,
+          useragent, brName, brFamily, brVersion, brType, brRenderengine, brLang, dvceType, dvceIsmobile, osName,
+          osFamily, osManufacturer, osTimezone, nameTracker, dvceCreatedTstamp)
+      .where(new ColumnName("platform") === "web" && new ColumnName("event_name") === "page_view") // this filtering could be done earlier?
+      .join(scratchWebPageContextDf.select(pageViewId), col(atomicEvents("event_id")) === col(scratchWebPageContextDf("event_id")), "inner")
+      .withColumn(new ColumnName("row_number"), row_number().over(windowSpec))
+      .select("*")
+      .where("row_number" === 1)
+  }
+
 
   def scratchEvents(spark: SparkSession): Unit = {
     val dfEvents = spark.sql(

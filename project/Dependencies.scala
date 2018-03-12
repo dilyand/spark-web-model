@@ -5,7 +5,7 @@ object Dependencies {
   object V {
     val hadoop           = "2.7.3"
     val spark            = "2.1.0"
-    val analyticsSdk     = "0.2.0"
+    val analyticsSdk     = "0.3.0-M1"
     val scopt            = "3.7.0"
   }
 
