@@ -65,53 +65,18 @@ object WebModel {
     enrichedData
   }
 
-  /** Get unique pairs of `event_id` and `page_view_id` */
-  def scratchWebPageContextDf(atomicEvents: DataFrame): DataFrame = {
-    val eventId = new ColumnName("event_id")
-    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
-      .getItem(0)               // Get first available context
-      .getField("id")           // Get `id` property
-      .as("page_view_id")       // Alias
-
-    atomicEvents
-      .select(eventId, pageViewId)
-      .groupBy(eventId, new ColumnName("page_view_id"))
-      .count().filter(new ColumnName("count") === 1)    // Exclude all rows with more than one page view id
-      .drop("count")
-  }
-
-  def scratchWebPageContext(spark: SparkSession): Unit = {
-    val dfWebPageContext = spark.sql(
-      """
-      WITH prep AS
-      (
-        SELECT
-          event_id AS root_id,
-          contexts_com_snowplowanalytics_snowplow_web_page_1[0] AS page_view_id
-        FROM
-          atomic_events
-        GROUP BY 1, 2
-      )
-
-      SELECT
-        *
-      FROM
-        prep
-      WHERE
-        root_id NOT IN (SELECT root_id FROM prep GROUP BY 1 HAVING COUNT(*) > 1) -- exclude all root ID with more than one page view ID
-      """
-    )
-    dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
-  }
-
-  /** Build events datarame */
-  def scratchEventsDf(atomicEvents: DataFrame, scratchWebPageContextDf: DataFrame): DataFrame = {
+  /** Select all desired fields from atomic.events and deduplicate cases where there is more than one page view
+    * per page view ID */
+  def scratchWebEventsDf(atomicEvents: DataFrame): DataFrame = {
     val userId = new ColumnName("user_id")
     val domainUserId = new ColumnName("domain_userid")
     val networkUserId = new ColumnName("network_userid")
-    val domainSessionid = new ColumnName("domain_sessionid")
+    val domainSessionId = new ColumnName("domain_sessionid")
     val domainSessionIdx = new ColumnName("domain_sessionidx")
-    val pageViewId = new ColumnName("page_view_id")
+    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
+      .getItem(0)               // Get first available context
+      .getField("id")           // Get `id` property
+      .alias("page_view_id")    // Alias
     val pageTitle = new ColumnName("page_title")
     val pageUrlScheme = new ColumnName("page_urlscheme")
     val pageUrlHost = new ColumnName("page_urlhost")
@@ -152,36 +117,134 @@ object WebModel {
     val useragent = new ColumnName("useragent")
     val brName = new ColumnName("br_name")
     val brFamily = new ColumnName("br_family")
-    val brVersion = new ColumnName("br_version")
-    val brType = new ColumnName("br_type")
     val brRenderEngine = new ColumnName("br_renderengine")
     val brLang = new ColumnName("br_lang")
     val dvceType = new ColumnName("dvce_type")
     val dvceIsMobile = new ColumnName("dvce_ismobile")
-    val osName = new ColumnName("os_name")
-    val osFamily = new ColumnName("os_family")
+    val useragentFamily = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("useragentFamily")
+      .alias("useragent_family")
+    val useragentMajor = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("useragentMajor")
+      .alias("useragent_major")
+    val useragentMinor = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("useragentMinor")
+      .alias("useragent_minor")
+    val useragentPatch = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("useragentPatch")
+      .alias("useragent_patch")
+    val useragentVersion = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("useragentVersion")
+      .alias("useragent_version")
+    val osFamily = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("osFamily")
+      .alias("os_family")
+    val osMajor = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("osMajor")
+      .alias("os_major")
+    val osMinor = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("osMinor")
+      .alias("os_minor")
+    val osPatch = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("osPatch")
+      .alias("os_patch")
+    val osVersion = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("osVersion")
+      .alias("os_version")
+    val deviceFamily = new ColumnName("contexts_com_snowplowanalytics_snowplow_ua_parser_context_1")
+      .getItem(0)
+      .getField("deviceFamily")
+      .alias("device_family")
     val osManufacturer = new ColumnName("os_manufacturer")
     val osTimezone = new ColumnName("os_timezone")
     val nameTracker = new ColumnName("name_tracker")
     val dvceCreatedTstamp = new ColumnName("dvce_created_tstamp")
-
-    val windowSpec = Window.partitionBy(pageViewId).orderBy(dvceCreatedTstamp)
+    val eventId = new ColumnName("event_id")
 
     atomicEvents
-      .select(userId, domainUserid, networkUserid, domainSessionid, domainSessionidx, pageTitle, pageUrlscheme,
-          pageUrlhost, pageUrlport, pageUrlpath, pageUrlquery, pageUrlfragment, refrUrlscheme, refrUrlhost, refrUrlport,
-          refrUrlpath, refrUrlquery, refrUrlfragment, refrMedium, refrSource, refrTerm, mktMedium, mktSource, mktTerm,
-          mktContent, mktCampaign, mktClickid, mktNetwork, geoCountry, geoRegion, geoRegionName, geoCity, geoZipcode,
-          geoLatitude, geoLongitude, geoTimezone, userIpaddress, ipIsp, ipOrganization, ipDomain, ipNetspeed, appId,
-          useragent, brName, brFamily, brVersion, brType, brRenderengine, brLang, dvceType, dvceIsmobile, osName,
-          osFamily, osManufacturer, osTimezone, nameTracker, dvceCreatedTstamp)
-      .where(new ColumnName("platform") === "web" && new ColumnName("event_name") === "page_view") // this filtering could be done earlier?
-      .join(scratchWebPageContextDf.select(pageViewId), col(atomicEvents("event_id")) === col(scratchWebPageContextDf("event_id")), "inner")
-      .withColumn(new ColumnName("row_number"), row_number().over(windowSpec))
-      .select("*")
-      .where("row_number" === 1)
+      .filter(new ColumnName("platform") === "web")
+      .filter(new ColumnName("event_name") === "page_view")
+      .select(userId, domainUserId, networkUserId, domainSessionId, domainSessionIdx, pageTitle, pageUrlScheme,
+        pageUrlHost, pageUrlPort, pageUrlPath, pageUrlQuery, pageUrlFragment, refrUrlScheme, refrUrlHost, refrUrlPort,
+        refrUrlPath, refrUrlQuery, refrUrlFragment, refrMedium, refrSource, refrTerm, mktMedium, mktSource, mktTerm,
+        mktContent, mktCampaign, mktClickId, mktNetwork, geoCountry, geoRegion, geoRegionName, geoCity, geoZipcode,
+        geoLatitude, geoLongitude, geoTimezone, userIpAddress, ipIsp, ipOrganization, ipDomain, ipNetSpeed, appId,
+        useragent, brName, brFamily, brRenderEngine, brLang, dvceType, dvceIsMobile, useragentFamily, useragentMajor,
+        useragentMinor, useragentPatch, useragentVersion, osFamily, osMajor, osMinor, osPatch, osVersion,
+        deviceFamily, osManufacturer, osTimezone, nameTracker, dvceCreatedTstamp, eventId,
+        row_number().over(Window.partitionBy(pageViewId).orderBy(dvceCreatedTstamp.asc)).alias("n"))
+      .filter(new ColumnName("n") === 1)
+      .drop("n")
   }
 
+  /** Calculate time engaged */
+  def scratchWebEventsTimeDf(atomicEvents: DataFrame): DataFrame = {
+    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
+      .getItem(0)               // Get first available context
+      .getField("id")           // Get `id` property
+      .alias("page_view_id")    // Alias
+    val derivedTstamp = new ColumnName("derived_tstamp")
+    val eventName = new ColumnName("event_name")
+
+    atomicEvents
+      .filter(eventName === "page_view" || eventName === "page_ping")
+      .select(pageViewId,
+        min(derivedTstamp).alias("min_tstamp"),
+        max(derivedTstamp).alias("max_tstamp"),
+        sum(when(eventName === "page_view", 1).otherwise(0)).alias("pv_count"),
+        sum(when(eventName === "page_ping", 1).otherwise(0)).alias("pp_count"),
+        countDistinct(floor(unix_timestamp(derivedTstamp) / 10)) * 10 - 10).alias("time_engaged_in_s")
+    // HOW TO GROUP BY 1?
+  }
+
+  /** Get unique pairs of `event_id` and `page_view_id` */
+  def scratchWebPageContextDf(atomicEvents: DataFrame): DataFrame = {
+    val eventId = new ColumnName("event_id")
+    val pageViewId = new ColumnName("contexts_com_snowplowanalytics_snowplow_web_page_1")
+      .getItem(0)               // Get first available context
+      .getField("id")           // Get `id` property
+      .as("page_view_id")       // Alias
+
+    atomicEvents
+      .select(eventId, pageViewId)
+      .groupBy(eventId, new ColumnName("page_view_id"))
+      .count().filter(new ColumnName("count") === 1)    // Exclude all rows with more than one page view id
+      .drop("count")
+  }
+
+  def scratchWebPageContext(spark: SparkSession): Unit = {
+    val dfWebPageContext = spark.sql(
+      """
+      WITH prep AS
+      (
+        SELECT
+          event_id AS root_id,
+          contexts_com_snowplowanalytics_snowplow_web_page_1[0] AS page_view_id
+        FROM
+          atomic_events
+        GROUP BY 1, 2
+      )
+
+      SELECT
+        *
+      FROM
+        prep
+      WHERE
+        root_id NOT IN (SELECT root_id FROM prep GROUP BY 1 HAVING COUNT(*) > 1) -- exclude all root ID with more than one page view ID
+      """
+    )
+    dfWebPageContext.createOrReplaceTempView("scratch_web_page_context")
+  }
 
   def scratchEvents(spark: SparkSession): Unit = {
     val dfEvents = spark.sql(
