@@ -31,9 +31,11 @@ scala> val atomicData = WebModel.getAtomicData(sc, spark, "/root/web-model/data/
 
 Bootstrapping Spark session in the container
 
+```shell
 cd ~/IdeaProjects/spark-web-model/
 docker run --rm -it -p 4040:4040 -p 8080:8080 -p 8081:8081 -h spark -v $(pwd):/root/web-model --name=spark web-model:0.0.1
 cd web-model/
 sbt
 assembly
 spark-shell --jars /root/web-model/target/scala-2.11/spark-web-model-0.1.0-rc1.jar
+```
